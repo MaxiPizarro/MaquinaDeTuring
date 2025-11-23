@@ -1,45 +1,65 @@
-using UnityEngine;
+Ôªøusing UnityEngine;
 using System.Collections;
 using System.Collections.Generic;
 
 public class TuringMachine : MonoBehaviour
 {
-    [Header("ConfiguraciÛn FÌsica")]
-    public Transform carrito;       // Arrastra aquÌ tu objeto "Carrito"
-    public Cell[] cintaLeds;        // Arrastra aquÌ tus 21 esferas (Cell_0 a Cell_20)
-    public float velocidad = 2.0f;  // Velocidad del movimiento
+    [Header("Componentes F√≠sicos")]
+    public Transform carritoTransform;
+    public Cell[] cintaLeds;
 
-    // Variables internas
+    [Header("Configuraci√≥n")]
+    public float velocidadMovimiento = 2.0f;
+    public float tiempoEsperaPaso = 0.3f;
+
     private bool ejecutando = false;
-    private int indiceCabezal = 0;  // En quÈ LED estamos (0 a 20)
-    private int estadoActual = 0;   // Estado q0, q1, etc.
+    private int indiceCabezal = 0;
+    private int estadoActual = 0;
+    private bool? operacionSumaSeleccionada = null;
 
-    // Estructura para guardar las reglas
     private struct Regla
     {
-        public int escribir; // QuÈ color poner
-        public int mover;    // -1 Izquierda, 1 Derecha, 0 Parar
+        public int escribir;
+        public int mover;    // -1 Izquierda, 1 Derecha, 0 Halt
         public int nuevoEstado;
     }
 
-    // Tablas de reglas (Diccionarios)
     private Dictionary<string, Regla> reglasSuma = new Dictionary<string, Regla>();
     private Dictionary<string, Regla> reglasResta = new Dictionary<string, Regla>();
 
     void Start()
     {
         CargarReglas();
+        if (cintaLeds.Length > 0 && carritoTransform != null)
+        {
+            ActualizarPosicionVisual(0);
+        }
     }
 
-    // --- FUNCIONES PARA LOS BOTONES ---
-    public void BotonSumar()
+    // --- FUNCIONES P√öBLICAS ---
+    public void SeleccionarSuma()
     {
-        if (!ejecutando) StartCoroutine(ProcesoMaquina(true));
+        if (ejecutando) return;
+        operacionSumaSeleccionada = true;
+        Debug.Log("‚úÖ MODO SUMA ACTIVADO.");
     }
 
-    public void BotonRestar()
+    public void SeleccionarResta()
     {
-        if (!ejecutando) StartCoroutine(ProcesoMaquina(false));
+        if (ejecutando) return;
+        operacionSumaSeleccionada = false;
+        Debug.Log("‚úÖ MODO RESTA ACTIVADO.");
+    }
+
+    public void BotonRun()
+    {
+        if (ejecutando) return;
+        if (operacionSumaSeleccionada == null)
+        {
+            Debug.LogError("‚õî ERROR: Selecciona SUMA o RESTA primero.");
+            return;
+        }
+        StartCoroutine(EjecutarProceso(operacionSumaSeleccionada.Value));
     }
 
     public void BotonReset()
@@ -48,33 +68,42 @@ public class TuringMachine : MonoBehaviour
         ejecutando = false;
         indiceCabezal = 0;
         estadoActual = 0;
-        // Apagar todos los LEDs visualmente
+        operacionSumaSeleccionada = null;
         foreach (var c in cintaLeds) c.SetState(0);
-        // Mover carrito al inicio instant·neamente
         ActualizarPosicionVisual(0);
+        Debug.Log("üîÑ RESET.");
     }
 
-    // --- L”GICA PRINCIPAL (CORRUTINA) ---
-    IEnumerator ProcesoMaquina(bool esSuma)
+    // --- N√öCLEO ---
+    IEnumerator EjecutarProceso(bool esSuma)
     {
         ejecutando = true;
         indiceCabezal = 0;
-        estadoActual = 0; // q0
+        estadoActual = 0;
 
-        // Asegurar que visualmente estamos en el inicio
-        yield return MoverCarritoVisual(0);
+        Debug.Log("üöÄ INICIANDO PROCESO...");
+
+        yield return MoverCarritoSuave(0);
 
         while (ejecutando)
         {
-            // 1. Leer el sÌmbolo bajo el cabezal
+            // 1. Verificar l√≠mites globales
             if (indiceCabezal < 0 || indiceCabezal >= cintaLeds.Length)
             {
-                Debug.LogError("Error: Cabezal fuera de lÌmites");
+                // Si estamos limpiando (q9) y nos salimos por la derecha, es un final correcto.
+                if (estadoActual == 9 && indiceCabezal >= cintaLeds.Length)
+                {
+                    Debug.Log("üßπ LIMPIEZA COMPLETADA. Resultado: 0");
+                }
+                else
+                {
+                    Debug.LogError("Error: Cabezal fuera de l√≠mites.");
+                }
+                ejecutando = false;
                 break;
             }
-            int simboloLeido = cintaLeds[indiceCabezal].state;
 
-            // 2. Buscar la regla correspondiente
+            int simboloLeido = cintaLeds[indiceCabezal].state;
             string clave = estadoActual + "," + simboloLeido;
             Dictionary<string, Regla> tablaUsada = esSuma ? reglasSuma : reglasResta;
 
@@ -82,118 +111,147 @@ public class TuringMachine : MonoBehaviour
             {
                 Regla r = tablaUsada[clave];
 
-                // 3. Escribir (Cambiar color LED)
+                yield return new WaitForSeconds(tiempoEsperaPaso * 0.5f);
                 cintaLeds[indiceCabezal].SetState(r.escribir);
 
-                // 4. Verificar parada (Halt)
                 if (r.mover == 0)
                 {
-                    Debug.Log("Fin del proceso.");
+                    Debug.Log("üèÅ FIN (Halt por regla).");
                     ejecutando = false;
                     break;
                 }
 
-                // 5. Mover Cabezal (LÛgica)
+                // --- LOGICA ESPECIAL PARA BORDES ---
+                // Si estamos en el inicio (0) y la m√°quina quiere ir a la izquierda (-1)
+                if (indiceCabezal == 0 && r.mover == -1)
+                {
+
+                    // DETECCI√ìN DE RESTA NEGATIVA:
+                    // Si est√°bamos en q5 (buscando 1s en A) y chocamos con el inicio,
+                    // significa que A se acab√≥ y B todav√≠a tiene n√∫meros. ¬°Es negativo!
+                    if (!esSuma && estadoActual == 5)
+                    {
+                        Debug.Log("üìâ RESTA NEGATIVA DETECTADA. Iniciando limpieza total (q9)...");
+                        estadoActual = 9;  // Cambiamos a modo Borrador
+                        indiceCabezal += 1; // Rebotamos hacia la derecha para empezar a borrar
+
+                        // Movemos visualmente y forzamos el siguiente ciclo inmediatamente
+                        yield return MoverCarritoSuave(indiceCabezal);
+                        continue;
+                    }
+
+                    // Si no es negativo, es una parada normal en el inicio.
+                    Debug.Log("üè† FIN (Llegada al inicio). Resultado listo.");
+                    ejecutando = false;
+                    break;
+                }
+                // -----------------------------------------------
+
                 indiceCabezal += r.mover;
                 estadoActual = r.nuevoEstado;
 
-                // 6. Mover Cabezal (Visual - AnimaciÛn)
-                yield return MoverCarritoVisual(indiceCabezal);
+                yield return MoverCarritoSuave(indiceCabezal);
             }
             else
             {
-                // Si no hay regla, se detiene (Halt implÌcito)
-                Debug.Log("Halt (Sin regla definida).");
+                Debug.Log("üõë HALT (Sin regla para q" + estadoActual + ")");
                 ejecutando = false;
             }
         }
     }
 
-    IEnumerator MoverCarritoVisual(int indiceDestino)
+    IEnumerator MoverCarritoSuave(int indiceDestino)
     {
-        if (indiceDestino < 0 || indiceDestino >= cintaLeds.Length) yield break;
+        if (carritoTransform == null || cintaLeds == null || cintaLeds.Length == 0) yield break;
+        // Permitimos ir uno m√°s all√° del largo solo si estamos limpiando para salirnos suavemente
+        if (indiceDestino < 0 || indiceDestino > cintaLeds.Length) yield break;
 
-        // Obtener la posiciÛn X del LED destino
-        Vector3 destino = cintaLeds[indiceDestino].transform.position;
-        // Mantener la altura Y y profundidad Z del carrito original
-        Vector3 posFinal = new Vector3(destino.x, carrito.position.y, carrito.position.z);
+        Vector3 destino;
+        if (indiceDestino < cintaLeds.Length)
+            destino = cintaLeds[indiceDestino].transform.position;
+        else
+            // Si se sale por la derecha (fin de limpieza), calculamos una posici√≥n imaginaria
+            destino = cintaLeds[cintaLeds.Length - 1].transform.position + (Vector3.right * 0.015f);
 
-        Vector3 posInicial = carrito.position;
+        Vector3 posicionFinal = new Vector3(destino.x, carritoTransform.position.y, carritoTransform.position.z);
+        Vector3 posicionInicial = carritoTransform.position;
         float t = 0;
 
         while (t < 1f)
         {
-            t += Time.deltaTime * velocidad;
-            carrito.position = Vector3.Lerp(posInicial, posFinal, t);
+            t += Time.deltaTime * velocidadMovimiento;
+            carritoTransform.position = Vector3.Lerp(posicionInicial, posicionFinal, t);
             yield return null;
         }
-        carrito.position = posFinal; // Asegurar posiciÛn exacta al final
+        carritoTransform.position = posicionFinal;
     }
 
     void ActualizarPosicionVisual(int index)
     {
-        if (index >= 0 && index < cintaLeds.Length)
+        if (index >= 0 && index < cintaLeds.Length && carritoTransform != null)
         {
             Vector3 destino = cintaLeds[index].transform.position;
-            carrito.position = new Vector3(destino.x, carrito.position.y, carrito.position.z);
+            carritoTransform.position = new Vector3(destino.x, carritoTransform.position.y, carritoTransform.position.z);
         }
     }
 
-    // --- CARGA DE REGLAS (LÛgica Validada) ---
     void CargarReglas()
     {
-        // Formato: AgregarRegla(Diccionario, EstadoActual, Lee, Escribe, Mueve, NuevoEstado)
-        // Mueve: 1 = Derecha (R), -1 = Izquierda (L), 0 = Halt
-
-        // === SUMA ===
-        AgregarRegla(reglasSuma, 0, 0, 0, 1, 1); // q0, Lee 0(S) -> R, q1
-
-        AgregarRegla(reglasSuma, 1, 1, 1, 1, 1); // Avanza 1s
-        AgregarRegla(reglasSuma, 1, 2, 1, 1, 2); // Convierte Sep(2) en 1 -> q2
-        AgregarRegla(reglasSuma, 1, 0, 0, 0, -1); // Halt si vacÌo
-
-        AgregarRegla(reglasSuma, 2, 1, 1, 1, 2); // Avanza 2do bloque
-        AgregarRegla(reglasSuma, 2, 0, 0, -1, 3); // Encuentra fin -> L, q3
-
-        AgregarRegla(reglasSuma, 3, 1, 0, -1, 4); // Borra un 1 -> q4
-        AgregarRegla(reglasSuma, 3, 2, 0, -1, 4); // Caso borde
-
-        AgregarRegla(reglasSuma, 4, 1, 1, -1, 4); // Retorno
+        // === SUMA (Sin cambios) ===
+        AgregarRegla(reglasSuma, 0, 0, 0, 1, 1);
+        AgregarRegla(reglasSuma, 1, 1, 1, 1, 1);
+        AgregarRegla(reglasSuma, 1, 2, 1, 1, 2);
+        AgregarRegla(reglasSuma, 1, 0, 0, 0, -1);
+        AgregarRegla(reglasSuma, 2, 1, 1, 1, 2);
+        AgregarRegla(reglasSuma, 2, 0, 0, -1, 3);
+        AgregarRegla(reglasSuma, 3, 1, 0, -1, 4);
+        AgregarRegla(reglasSuma, 3, 2, 0, -1, 4);
+        AgregarRegla(reglasSuma, 4, 1, 1, -1, 4);
         AgregarRegla(reglasSuma, 4, 2, 1, -1, 4);
-        AgregarRegla(reglasSuma, 4, 0, 0, 0, -1); // Llega al inicio (0) -> Halt (Simplificado para array)
+        AgregarRegla(reglasSuma, 4, 0, 0, 0, -1);
 
-        // === RESTA ===
-        AgregarRegla(reglasResta, 0, 0, 0, 1, 1);
+        // === RESTA MEJORADA ===
+        AgregarRegla(reglasResta, 0, 0, 0, 1, 1); // q0
 
+        // q1: Buscar separador
         AgregarRegla(reglasResta, 1, 1, 1, 1, 1);
         AgregarRegla(reglasResta, 1, 2, 2, 1, 2);
         AgregarRegla(reglasResta, 1, 0, 0, 0, -1);
 
+        // q2: Ir al final de B
         AgregarRegla(reglasResta, 2, 1, 1, 1, 2);
         AgregarRegla(reglasResta, 2, 0, 0, -1, 3);
 
-        AgregarRegla(reglasResta, 3, 1, 0, -1, 4); // Borra de B
-        AgregarRegla(reglasResta, 3, 2, 0, -1, 8); // B vacÌo -> Limpieza
+        // q3: Restar en B
+        AgregarRegla(reglasResta, 3, 1, 0, -1, 4); // Borra 1 en B -> q4
+        AgregarRegla(reglasResta, 3, 2, 0, -1, 8); // B vac√≠o -> Limpieza Normal (q8)
+        AgregarRegla(reglasResta, 3, 0, 0, -1, 3); // Ignora huecos ya borrados
 
+        // q4: Volver al separador
         AgregarRegla(reglasResta, 4, 1, 1, -1, 4);
         AgregarRegla(reglasResta, 4, 0, 0, -1, 4);
-        AgregarRegla(reglasResta, 4, 2, 2, -1, 5); // Cruza sep
+        AgregarRegla(reglasResta, 4, 2, 2, -1, 5); // Cruza Sep -> q5
 
-        AgregarRegla(reglasResta, 5, 0, 0, -1, 5);
-        AgregarRegla(reglasResta, 5, 1, 0, 1, 6); // Borra de A -> q6
-                                                  // Si llegamos al inicio (indice 0) y leemos 0, es negativo -> q9
-                                                  // Nota: En Unity el inicio es Cell 0. Si Cell 0 es estado 0...
-                                                  // Agregamos caso especial en lÛgica de movimiento o asumimos Cell 0 es "S"
+        // q5: Buscar 1 en A
+        AgregarRegla(reglasResta, 5, 0, 0, -1, 5); // Sigue buscando a la izq
+        AgregarRegla(reglasResta, 5, 1, 0, 1, 6);  // Encuentra 1 en A, lo borra -> q6
+        // (Si llega al indice 0 aqu√≠, el c√≥digo en "EjecutarProceso" detecta negativo y salta a q9)
 
+        // q6: Reiniciar ciclo
         AgregarRegla(reglasResta, 6, 0, 0, 1, 6);
-        AgregarRegla(reglasResta, 6, 2, 2, 1, 2); // Reinicia ciclo
+        AgregarRegla(reglasResta, 6, 2, 2, 1, 2);
 
+        // q8: Limpieza Normal (Resultado Positivo)
         AgregarRegla(reglasResta, 8, 1, 1, -1, 8);
         AgregarRegla(reglasResta, 8, 0, 0, -1, 8);
-        AgregarRegla(reglasResta, 8, 2, 0, -1, 10);
+        // Se detiene al llegar al inicio gracias al fix de borde.
 
-        AgregarRegla(reglasResta, 10, 1, 0, 1, 10); // Limpieza final
-        AgregarRegla(reglasResta, 10, 0, 0, 0, -1);
+        // === q9: EL BORRADOR (Limpieza Negativa) ===
+        // Avanza hacia la derecha (1) borrando todo lo que encuentra
+        AgregarRegla(reglasResta, 9, 0, 0, 1, 9); // Si lee 0, deja 0, avanza
+        AgregarRegla(reglasResta, 9, 1, 0, 1, 9); // Si lee 1 (Rojo), lo apaga, avanza
+        AgregarRegla(reglasResta, 9, 2, 0, 1, 9); // Si lee 2 (Morado), lo apaga, avanza
+        // Seguir√° as√≠ hasta salirse de la cinta por la derecha y el ciclo While lo detendr√°.
     }
 
     void AgregarRegla(Dictionary<string, Regla> tabla, int q, int lee, int escribe, int mueve, int qNext)

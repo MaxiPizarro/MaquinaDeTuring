@@ -1,53 +1,41 @@
-using UnityEngine;
+Ôªøusing UnityEngine;
 
 public class BotonFisico : MonoBehaviour
 {
-    // Definimos quÈ tipo de botÛn es este
-    public enum TipoFuncion { Sumar, Restar, Reset }
+    // Las 4 funciones que pediste
+    public enum TipoFuncion { Sumar, Restar, Run, Reset }
     public TipoFuncion funcion;
 
-    // Referencia al cerebro de la m·quina
     public TuringMachine maquina;
 
-    // Efecto visual simple (color al pasar el mouse)
-    private Color colorOriginal;
-    private Renderer _rend;
-
-    void Start()
-    {
-        _rend = GetComponent<Renderer>();
-        colorOriginal = _rend.material.color;
-    }
-
-    void OnMouseEnter()
-    {
-        // Se ilumina un poco cuando pasas el mouse
-        _rend.material.color = Color.yellow;
-    }
-
-    void OnMouseExit()
-    {
-        _rend.material.color = colorOriginal;
-    }
-
+    // L√≥gica simple para detectar clic sin depender de Colliders complejos
+    // (Nota: Este m√©todo es llamado por el MouseManager si lo est√°s usando,
+    //  o por el sistema de f√≠sica de Unity si los colliders est√°n bien)
     void OnMouseDown()
     {
-        // Al hacer clic, empujamos el botÛn visualmente y llamamos a la m·quina
-        Debug.Log("BotÛn presionado: " + funcion);
+        Debug.Log("üîò Bot√≥n presionado: " + funcion);
+        EjecutarAccion();
+    }
 
+    // Separamos la acci√≥n para poder llamarla desde otros scripts si hace falta
+    public void EjecutarAccion()
+    {
         if (maquina == null)
         {
-            Debug.LogError("°No has conectado la M·quina al botÛn en el Inspector!");
+            Debug.LogError("‚ö†Ô∏è ERROR: El bot√≥n " + gameObject.name + " no tiene conectada la 'Maquina' en el Inspector.");
             return;
         }
 
         switch (funcion)
         {
             case TipoFuncion.Sumar:
-                maquina.BotonSumar();
+                maquina.SeleccionarSuma();
                 break;
             case TipoFuncion.Restar:
-                maquina.BotonRestar();
+                maquina.SeleccionarResta();
+                break;
+            case TipoFuncion.Run:
+                maquina.BotonRun();
                 break;
             case TipoFuncion.Reset:
                 maquina.BotonReset();
@@ -55,3 +43,4 @@ public class BotonFisico : MonoBehaviour
         }
     }
 }
+
